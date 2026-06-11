@@ -1,8 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/note.dart';
+import '../services/firestore_service.dart';
+import '../widgets/note_card.dart';
+import 'note_editor_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final FirestoreService _firestoreService = FirestoreService();
+  final ScrollController _scrollController = ScrollController();
+  List<Note> _notes = [];
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels == _scrollController.position.maxScrollExtent) {
+      // Optional: Load more implementation for pagination here.
+    }
+  }
 
   Future<void> _logout(BuildContext context) async {
     final shouldLogout = await showDialog<bool>(
@@ -33,6 +65,43 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _deleteNote(Note note) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Note', style: TextStyle(color: Colors.redAccent)),
+        content: const Text('Are you sure you want to delete this note?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(foregroundColor: Colors.grey),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete == true) {
+      try {
+        await _firestoreService.deleteNote(note.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -42,7 +111,7 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Home'),
+        title: const Text('📝 My Notes'),
         foregroundColor: Colors.white,
         backgroundColor: Colors.redAccent,
         actions: [
@@ -53,54 +122,58 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.check_circle, size: 100, color: Colors.green),
-              const SizedBox(height: 24),
-              Text(
-                'Hello, ${user.displayName ?? 'User'}!',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.redAccent,
-                ),
-                textAlign: TextAlign.center,
+      body: StreamBuilder<List<Note>>(
+        stream: _firestoreService.getNotes(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Colors.redAccent));
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return const Center(
+              child: Text(
+                'No notes yet. Create one!',
+                style: TextStyle(fontSize: 18, color: Colors.grey),
               ),
-              const SizedBox(height: 8),
-              Text(
-                user.email ?? '',
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 32),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: Colors.green),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.verified_user, color: Colors.green),
-                    SizedBox(width: 8),
-                    Text(
-                      'You are logged in!',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
-                      ),
+            );
+          }
+
+          final notes = snapshot.data!;
+          return ListView.builder(
+            controller: _scrollController,
+            itemCount: notes.length,
+            itemBuilder: (context, index) {
+              final note = notes[index];
+              return NoteCard(
+                note: note,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => NoteEditorScreen(note: note),
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+                  );
+                },
+                onDelete: () => _deleteNote(note),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const NoteEditorScreen()),
+          );
+        },
+        backgroundColor: Colors.redAccent,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.add),
       ),
     );
   }
